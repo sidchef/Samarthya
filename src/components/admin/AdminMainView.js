@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import CompanyAllocatedStudents from './CompanyAllocatedStudents';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -9,6 +10,7 @@ const AdminMainView = ({ setView }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [runningAllocation, setRunningAllocation] = useState(false);
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' or 'allocated'
 
   useEffect(() => {
     fetchData();
@@ -18,7 +20,6 @@ const AdminMainView = ({ setView }) => {
     try {
       setLoading(true);
       
-      // Fetch students and jobs from API
       const [studentsRes, jobsRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/admin/students`),
         axios.get(`${API_BASE_URL}/admin/jobs`)
@@ -44,7 +45,6 @@ const AdminMainView = ({ setView }) => {
       setRunningAllocation(true);
       const response = await axios.post(`${API_BASE_URL}/admin/run-allocation`);
       alert(response.data.message || 'Allocation completed successfully!');
-      // Refresh data after allocation
       await fetchData();
     } catch (err) {
       console.error('Error running allocation:', err);
@@ -58,6 +58,11 @@ const AdminMainView = ({ setView }) => {
     return <div className="text-center py-8">Loading data...</div>;
   }
 
+  // Show allocated students view
+  if (activeTab === 'allocated') {
+    return <CompanyAllocatedStudents onBack={() => setActiveTab('dashboard')} />;
+  }
+
   return (
     <div>
       <header className="flex justify-between items-center mb-6">
@@ -69,6 +74,12 @@ const AdminMainView = ({ setView }) => {
             className="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:bg-gray-400"
           >
             {runningAllocation ? 'Running...' : '🚀 Run Allocation'}
+          </button>
+          <button 
+            onClick={() => setActiveTab('allocated')}
+            className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700"
+          >
+            👥 View Allocated
           </button>
           <button 
             onClick={() => setView('analytics')} 

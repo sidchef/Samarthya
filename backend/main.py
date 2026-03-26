@@ -1,5 +1,8 @@
 # main.py
-
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Path, Request, Query
 from db import get_connection
 from utils import save_file, check_resume_format, parse_resume, extract_basic_details
@@ -15,6 +18,17 @@ from match import engine, run_reallocation_for_student, process_acceptance_logic
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+
+
+
+load_dotenv()
+
+# Email Configuration
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_EMAIL = os.getenv("SMTP_EMAIL")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # --- NEW Pydantic Models for Preferences ---
 class LocationModel(BaseModel):
@@ -48,6 +62,139 @@ ssl_args = {
     "ssl_ca": ssl_cert_path
 }    
 
+
+# =======================
+# EMAIL UTILITY FUNCTION
+# =======================
+
+# Replace the send_allocation_email function
+
+def send_allocation_email(student_email, student_name, company_name, role, allocation_id):
+    """Send allocation email with accept/reject links"""
+    try:
+        # ✅ VALIDATE allocation_id
+        if not allocation_id or str(allocation_id).strip() == "None" or str(allocation_id).strip() == "":
+            print(f"⚠️ WARNING: Invalid allocation_id: {allocation_id}")
+            return False
+        
+        # Debug: Check if credentials are loaded
+        if not SMTP_EMAIL or not SMTP_PASSWORD:
+            print(f"⚠️ WARNING: Email credentials not set. SMTP_EMAIL={SMTP_EMAIL}")
+            return False
+        
+        if not student_email or str(student_email).strip() == "None" or str(student_email).strip() == "":
+            print(f"⚠️ WARNING: Invalid student email: {student_email}")
+            return False
+        
+        # ✅ Use allocation_id as string (UUID format)
+        allocation_id_str = str(allocation_id).strip()
+        accept_link = f"{FRONTEND_URL}/allocation/accept/{allocation_id_str}"
+        reject_link = f"{FRONTEND_URL}/allocation/reject/{allocation_id_str}"
+        
+        print(f"📧 Links generated for allocation_id {allocation_id_str}:")
+        print(f"   Accept: {accept_link}")
+        print(f"   Reject: {reject_link}")
+        
+        subject = f"🎉 Job Allocation - {company_name}"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; color: #333; line-height: 1.6; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center; }}
+                .header h1 {{ margin: 0; font-size: 28px; }}
+                .content {{ background: white; padding: 30px; border: 1px solid #e0e0e0; }}
+                .content p {{ margin: 15px 0; font-size: 16px; }}
+                .details {{ background: #f0f4ff; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #667eea; }}
+                .details p {{ margin: 10px 0; font-size: 15px; }}
+                .details strong {{ color: #667eea; }}
+                .button-group {{ display: flex; gap: 15px; margin: 30px 0; justify-content: center; }}
+                .btn {{ padding: 14px 40px; border-radius: 5px; text-decoration: none; font-weight: bold; font-size: 16px; display: inline-block; border: none; cursor: pointer; }}
+                .btn-accept {{ background: #4CAF50; color: white; }}
+                .btn-accept:hover {{ background: #45a049; }}
+                .btn-reject {{ background: #f44336; color: white; }}
+                .btn-reject:hover {{ background: #da190b; }}
+                .footer {{ background: #f5f5f5; padding: 20px; text-align: center; font-size: 12px; color: #666; border-radius: 0 0 8px 8px; border: 1px solid #e0e0e0; border-top: none; }}
+                .note {{ background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 3px; }}
+                .note p {{ margin: 5px 0; font-size: 14px; color: #856404; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🎉 Congratulations!</h1>
+                </div>
+                
+                <div class="content">
+                    <p>Dear <strong>{student_name}</strong>,</p>
+                    
+                    <p>We are delighted to inform you that you have been selected for an internship position! This is an excellent opportunity to gain real-world experience and develop your professional skills.</p>
+                    
+                    <div class="details">
+                        <h3 style="margin-top: 0; color: #667eea; font-size: 18px;">📋 Allocation Details:</h3>
+                        <p><strong>Company:</strong> {company_name}</p>
+                        <p><strong>Position:</strong> {role}</p>
+                        <p><strong>Current Status:</strong> <span style="color: #ffc107; font-weight: bold;">Awaiting Your Response</span></p>
+                    </div>
+                    
+                    <p>Please confirm your acceptance or rejection of this allocation by clicking one of the buttons below. <strong>Your timely response is important</strong> as it helps us finalize the placement process.</p>
+                    
+                    <div class="button-group">
+                        <a href="{accept_link}" class="btn btn-accept">✓ Accept Offer</a>
+                        <a href="{reject_link}" class="btn btn-reject">✗ Reject Offer</a>
+                    </div>
+                    
+                    <div class="note">
+                        <p><strong>⚠️ Important Note:</strong></p>
+                        <p>If the buttons above don't work, copy and paste this link in your browser:</p>
+                        <p style="word-break: break-all; background: white; padding: 10px; border-radius: 3px; font-size: 12px;">{accept_link}</p>
+                    </div>
+                    
+                    <p style="color: #666; font-size: 15px;">
+                        If you have any questions or concerns about this allocation, please contact the placement office immediately. We're here to help!
+                    </p>
+                    
+                    <p style="margin-top: 30px;">Best regards,<br><strong>🎓 Samarthya Placement Management System</strong></p>
+                </div>
+                
+                <div class="footer">
+                    <p><strong>This is an automated email.</strong> Please do not reply directly.</p>
+                    <p>For assistance, contact: <strong>placement@samarthya.edu</strong></p>
+                    <p>&copy; 2026 Samarthya. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Create email message
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_EMAIL
+        msg["To"] = student_email
+        
+        # Attach HTML content
+        msg.attach(MIMEText(html_content, "html"))
+        
+        print(f"📧 Sending email to {student_email}...")
+        
+        # Send email
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.sendmail(SMTP_EMAIL, student_email, msg.as_string())
+        
+        print(f"✅ Allocation email sent to {student_email} for {company_name}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error sending allocation email to {student_email}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 # -------------------------------
 # DB CONNECTION
 # -------------------------------
@@ -75,18 +222,7 @@ app.add_middleware(
 # Import the correct get_connection from db.py (mysql.connector version)
 # The db.get_connection() is already imported at the top, so we can use it directly
 
-# =======================
-# NEW: Admin endpoint to trigger matching
-# =======================
-@app.post("/admin/run-allocation")
-def trigger_allocation():
-    try:
-        print("--- TRIGGERING ALLOCATION RUN ---")
-        run_allocation()
-        print("--- ALLOCATION RUN COMPLETE ---")
-        return {"message": "Allocation process completed successfully."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred during allocation: {str(e)}")
+
 
 # =======================
 # DATABASE PING
@@ -244,6 +380,18 @@ def add_sector(org_id: int, sector_name: str = Form(...), location: str = Form(N
             conn.close()
             raise HTTPException(status_code=404, detail=f"Organization with ID {org_id} not found")
         
+        # 🆕 AUTO-CREATE SECTOR IF IT DOESN'T EXIST
+        cursor.execute("SELECT sector_id FROM sectors WHERE sector_name=%s", (sector_name,))
+        sector_row = cursor.fetchone()
+        
+        if not sector_row:
+            # Sector doesn't exist, create it
+            cursor.execute("INSERT INTO sectors (sector_name) VALUES (%s)", (sector_name,))
+            conn.commit()
+            print(f"✅ New sector created: '{sector_name}'")
+        else:
+            print(f"ℹ️ Sector '{sector_name}' already exists (ID: {sector_row[0]})")
+        
         # Insert directly into company_job_postings table (new simplified table)
         cursor.execute("""
             INSERT INTO company_job_postings 
@@ -323,6 +471,19 @@ def update_sector(sector_id: int, sector_name: str = Form(None), location: str =
         conn.close()
         raise HTTPException(status_code=404, detail="Job posting not found")
     
+    # 🆕 AUTO-CREATE SECTOR IF IT DOESN'T EXIST (when updating sector_name)
+    if sector_name is not None:
+        cursor.execute("SELECT sector_id FROM sectors WHERE sector_name=%s", (sector_name,))
+        sector_row = cursor.fetchone()
+        
+        if not sector_row:
+            # Sector doesn't exist, create it
+            cursor.execute("INSERT INTO sectors (sector_name) VALUES (%s)", (sector_name,))
+            conn.commit()
+            print(f"✅ New sector created during update: '{sector_name}'")
+        else:
+            print(f"ℹ️ Sector '{sector_name}' already exists (ID: {sector_row[0]})")
+    
     # Build update query dynamically
     update_fields = []
     update_values = []
@@ -390,6 +551,231 @@ def delete_sector(org_id: int, sector_id: int):
     cursor.close()
     conn.close()
     return {"message": "Job posting deleted successfully"}
+
+# =======================
+# COMPANY: AUTO-CREATE SECTORS & ROLES
+# =======================
+
+@app.post("/organization/{org_id}/create-sector")
+async def company_create_sector(org_id: int, sector_name: str = Form(...)):
+    """Company creates a new sector if not in list"""
+    try:
+        # Verify organization exists
+        with engine.connect() as conn:
+            org_check = conn.execute(
+                text("SELECT organization_id FROM organizations WHERE organization_id = :org_id"),
+                {"org_id": org_id}
+            ).fetchone()
+            if not org_check:
+                raise HTTPException(status_code=404, detail="Organization not found")
+        
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        # Validate sector name
+        if not sector_name or len(sector_name.strip()) == 0:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=400, detail="Sector name cannot be empty")
+        
+        # Check if sector already exists (case-insensitive)
+        cursor.execute("SELECT sector_id FROM sectors WHERE LOWER(sector_name) = LOWER(%s)", 
+                      (sector_name,))
+        existing = cursor.fetchone()
+        
+        if existing:
+            cursor.close()
+            conn.close()
+            return {
+                "status": "exists",
+                "sector_id": existing['sector_id'],
+                "message": f"Sector '{sector_name}' already exists"
+            }
+        
+        # Create new sector
+        cursor.execute("INSERT INTO sectors (sector_name) VALUES (%s)", (sector_name,))
+        sector_id = cursor.lastrowid
+        conn.commit()
+        
+        print(f"✅ Company {org_id} created sector: {sector_name} (ID: {sector_id})")
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "status": "created",
+            "sector_id": sector_id,
+            "sector_name": sector_name,
+            "message": f"Sector '{sector_name}' created successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error creating sector: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating sector: {str(e)}")
+
+
+@app.post("/organization/{org_id}/create-role")
+async def company_create_role(org_id: int, role_name: str = Form(...), 
+                             sector_name: str = Form(...)):
+    """Company creates a new role for a sector"""
+    try:
+        # Verify organization exists
+        with engine.connect() as conn:
+            org_check = conn.execute(
+                text("SELECT organization_id FROM organizations WHERE organization_id = :org_id"),
+                {"org_id": org_id}
+            ).fetchone()
+            if not org_check:
+                raise HTTPException(status_code=404, detail="Organization not found")
+        
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        # Validate role name
+        if not role_name or len(role_name.strip()) == 0:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=400, detail="Role name cannot be empty")
+        
+        # Get sector ID from sector_name
+        cursor.execute("SELECT sector_id FROM sectors WHERE LOWER(sector_name) = LOWER(%s)", 
+                      (sector_name,))
+        sector_row = cursor.fetchone()
+        
+        if not sector_row:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail=f"Sector '{sector_name}' not found")
+        
+        sector_id = sector_row['sector_id']
+        
+        # Check if role already exists for this sector (case-insensitive)
+        cursor.execute("""
+            SELECT role_id FROM roles 
+            WHERE LOWER(role_name) = LOWER(%s) AND sector_id = %s
+        """, (role_name, sector_id))
+        
+        existing = cursor.fetchone()
+        if existing:
+            cursor.close()
+            conn.close()
+            return {
+                "status": "exists",
+                "role_id": existing['role_id'],
+                "message": f"Role '{role_name}' already exists for sector '{sector_name}'"
+            }
+        
+        # Create new role
+        cursor.execute("""
+            INSERT INTO roles (sector_id, role_name) 
+            VALUES (%s, %s)
+        """, (sector_id, role_name))
+        role_id = cursor.lastrowid
+        conn.commit()
+        
+        print(f"✅ Company {org_id} created role: {role_name} (ID: {role_id}) for sector: {sector_name}")
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "status": "created",
+            "role_id": role_id,
+            "role_name": role_name,
+            "sector_id": sector_id,
+            "sector_name": sector_name,
+            "message": f"Role '{role_name}' created successfully for sector '{sector_name}'"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error creating role: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating role: {str(e)}")
+
+
+@app.get("/organization/{org_id}/available-sectors")
+async def get_available_sectors_for_company(org_id: int):
+    """Get list of all available sectors (for company dropdowns)"""
+    try:
+        # Verify organization exists
+        with engine.connect() as conn:
+            org_check = conn.execute(
+                text("SELECT organization_id FROM organizations WHERE organization_id = :org_id"),
+                {"org_id": org_id}
+            ).fetchone()
+            if not org_check:
+                raise HTTPException(status_code=404, detail="Organization not found")
+        
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT sector_id, sector_name
+            FROM sectors
+            ORDER BY sector_name ASC
+        """)
+        
+        sectors = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        return {
+            "sectors": [{"value": s['sector_id'], "label": s['sector_name']} for s in sectors],
+            "total": len(sectors)
+        }
+        
+    except Exception as e:
+        print(f"❌ Error fetching sectors: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching sectors: {str(e)}")
+
+
+@app.get("/organization/{org_id}/available-roles")
+async def get_available_roles_for_company(org_id: int, sector_id: int = Query(...)):
+    """Get list of available roles for a specific sector"""
+    try:
+        # Verify organization exists
+        with engine.connect() as conn:
+            org_check = conn.execute(
+                text("SELECT organization_id FROM organizations WHERE organization_id = :org_id"),
+                {"org_id": org_id}
+            ).fetchone()
+            if not org_check:
+                raise HTTPException(status_code=404, detail="Organization not found")
+        
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        # Verify sector exists
+        cursor.execute("SELECT sector_id FROM sectors WHERE sector_id = %s", (sector_id,))
+        if not cursor.fetchone():
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Sector not found")
+        
+        cursor.execute("""
+            SELECT role_id, role_name
+            FROM roles
+            WHERE sector_id = %s
+            ORDER BY role_name ASC
+        """, (sector_id,))
+        
+        roles = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        return {
+            "roles": [{"value": r['role_id'], "label": r['role_name']} for r in roles],
+            "total": len(roles)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching roles: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching roles: {str(e)}")
 
 # =======================
 # COMPANY JOB POSTINGS TO OPPORTUNITIES SYNC
@@ -1242,6 +1628,44 @@ async def get_locations_by_sector_and_role(
         print(f"Error fetching locations: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching locations: {e}")
 
+@app.get("/api/sectors-stats")
+async def get_sectors_statistics():
+    """
+    Get all sectors with statistics on job postings and companies
+    Useful for admin dashboards to see which sectors are active
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT 
+                s.sector_id,
+                s.sector_name,
+                COUNT(DISTINCT cjp.job_id) as total_postings,
+                COUNT(DISTINCT cjp.organization_id) as companies_hiring,
+                MIN(cjp.created_at) as first_posting,
+                MAX(cjp.created_at) as latest_posting
+            FROM sectors s
+            LEFT JOIN company_job_postings cjp ON s.sector_name = cjp.sector_name
+            GROUP BY s.sector_id, s.sector_name
+            ORDER BY total_postings DESC, s.sector_name ASC
+        """)
+        
+        sectors = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        return {
+            "sectors": sectors,
+            "total_sectors": len(sectors),
+            "message": "Auto-created sectors from company job postings"
+        }
+        
+    except Exception as e:
+        print(f"Error fetching sector statistics: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching sector statistics: {e}")
+
 # =======================
 # GET MATCHED OFFERS FOR STUDENT
 # =======================
@@ -1760,6 +2184,329 @@ def get_student_data(user_id: int = Path(...)):
     conn.close()
     return {"verification": verification, "profile": profile, "resume": resume}
 
+
+# =======================
+# STUDENT: ACCEPT/REJECT ALLOCATION
+# =======================
+
+@app.post("/student/allocation/{allocation_id}/accept")
+def accept_allocation(allocation_id: str):
+    """Student accepts an allocation"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        print(f"📧 Accepting allocation ID: {allocation_id}")
+        
+        # ✅ Start explicit transaction
+        conn.start_transaction()
+        
+        try:
+            # STEP 1: Fetch allocation details
+            cursor.execute("""
+                SELECT 
+                    profile_id,
+                    student_name, 
+                    company_name, 
+                    role,
+                    opportunity_id,
+                    status
+                FROM allocation_status 
+                WHERE allocation_id = %s
+            """, (allocation_id,))
+            
+            allocation = cursor.fetchone()
+            
+            if not allocation:
+                conn.rollback()
+                cursor.close()
+                conn.close()
+                raise HTTPException(status_code=404, detail="Allocation not found")
+            
+            opportunity_id = allocation['opportunity_id']
+            profile_id = allocation['profile_id']
+            
+            # STEP 2: Update this allocation to 'Accepted' and update seat_summary in one batch
+            cursor.execute("""
+                UPDATE allocation_status 
+                SET status = 'Accepted'
+                WHERE allocation_id = %s
+            """, (allocation_id,))
+            
+            cursor.execute("""
+                UPDATE seat_summary
+                SET 
+                    allocated_count = allocated_count + 1,
+                    remaining_seats = CASE 
+                        WHEN remaining_seats > 0 THEN remaining_seats - 1 
+                        ELSE 0 
+                    END
+                WHERE opportunity_id = %s
+            """, (opportunity_id,))
+            
+            # STEP 3: Deactivate other allocations for this student
+            cursor.execute("""
+                UPDATE allocation_status 
+                SET status = 'Deactivated'
+                WHERE profile_id = %s 
+                AND allocation_id != %s
+                AND status IN ('Allocated', 'Waiting')
+            """, (profile_id, allocation_id))
+            
+            # STEP 4: Get list of opportunity_ids that were deactivated
+            cursor.execute("""
+                SELECT DISTINCT opportunity_id 
+                FROM allocation_status
+                WHERE profile_id = %s 
+                AND status = 'Deactivated'
+                AND allocation_id != %s
+            """, (profile_id, allocation_id))
+            
+            deactivated_opps = cursor.fetchall()
+            
+            # STEP 5: Free up seats for deactivated opportunities
+            if deactivated_opps:
+                for opp in deactivated_opps:
+                    cursor.execute("""
+                        UPDATE seat_summary
+                        SET 
+                            remaining_seats = remaining_seats + 1,
+                            allocated_count = CASE 
+                                WHEN allocated_count > 0 THEN allocated_count - 1 
+                                ELSE 0 
+                            END
+                        WHERE opportunity_id = %s
+                    """, (opp['opportunity_id'],))
+            
+            # ✅ Commit transaction
+            conn.commit()
+            
+            # STEP 6: Fetch updated seat summary (after commit)
+            cursor.execute("""
+                SELECT seats, allocated_count, remaining_seats
+                FROM seat_summary
+                WHERE opportunity_id = %s
+            """, (opportunity_id,))
+            
+            seat_info = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            print(f"✅ Allocation {allocation_id} ACCEPTED - {allocation['student_name']} at {allocation['company_name']}")
+            if seat_info:
+                print(f"📊 Seat Summary Updated: {seat_info['allocated_count']}/{seat_info['seats']} seats filled, {seat_info['remaining_seats']} remaining")
+            
+            return {
+                "status": "success",
+                "message": f"Your allocation with {allocation['company_name']} has been accepted!",
+                "allocation_id": allocation_id,
+                "student_name": allocation['student_name'],
+                "company_name": allocation['company_name'],
+                "role": allocation['role'],
+                "seat_summary": {
+                    "total_seats": seat_info['seats'] if seat_info else None,
+                    "allocated": seat_info['allocated_count'] if seat_info else None,
+                    "remaining": seat_info['remaining_seats'] if seat_info else None
+                }
+            }
+            
+        except Exception as inner_e:
+            conn.rollback()
+            raise inner_e
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error accepting allocation: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/student/allocation/{allocation_id}/reject")
+def reject_allocation(allocation_id: str):
+    """Student rejects an allocation"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        print(f"📧 Rejecting allocation ID: {allocation_id}")
+        
+        # ✅ Start explicit transaction
+        conn.start_transaction()
+        
+        try:
+            # STEP 1: Fetch allocation details
+            cursor.execute("""
+                SELECT 
+                    profile_id,
+                    student_name,
+                    company_name,
+                    role,
+                    opportunity_id,
+                    status
+                FROM allocation_status
+                WHERE allocation_id = %s
+            """, (allocation_id,))
+            
+            allocation = cursor.fetchone()
+            
+            if not allocation:
+                conn.rollback()
+                cursor.close()
+                conn.close()
+                raise HTTPException(status_code=404, detail="Allocation not found")
+            
+            opportunity_id = allocation['opportunity_id']
+            current_status = allocation['status']
+            
+            # STEP 2: Update allocation status to 'Rejected'
+            cursor.execute("""
+                UPDATE allocation_status 
+                SET status = 'Rejected'
+                WHERE allocation_id = %s
+            """, (allocation_id,))
+            
+            # STEP 3: If student was 'Allocated', free up the seat
+            if current_status == 'Allocated':
+                cursor.execute("""
+                    UPDATE seat_summary
+                    SET 
+                        allocated_count = CASE 
+                            WHEN allocated_count > 0 THEN allocated_count - 1 
+                            ELSE 0 
+                        END,
+                        remaining_seats = remaining_seats + 1
+                    WHERE opportunity_id = %s
+                """, (opportunity_id,))
+                
+                print(f"♻️  Seat freed up for opportunity {opportunity_id}")
+                
+                # STEP 4: Check and promote the next waiting student
+                cursor.execute("""
+                    SELECT allocation_id, student_name, student_email
+                    FROM allocation_status
+                    WHERE opportunity_id = %s
+                    AND status = 'Waiting'
+                    ORDER BY allocation_score DESC
+                    LIMIT 1
+                """, (opportunity_id,))
+                
+                waiting_student = cursor.fetchone()
+                
+                if waiting_student:
+                    print(f"📞 Promoting waiting student {waiting_student['student_name']} to Allocated")
+                    cursor.execute("""
+                        UPDATE allocation_status
+                        SET status = 'Allocated'
+                        WHERE allocation_id = %s
+                    """, (waiting_student['allocation_id'],))
+                    
+                    # Update seat summary for the newly promoted student
+                    cursor.execute("""
+                        UPDATE seat_summary
+                        SET 
+                            allocated_count = allocated_count + 1,
+                            remaining_seats = CASE 
+                                WHEN remaining_seats > 0 THEN remaining_seats - 1 
+                                ELSE 0 
+                            END
+                        WHERE opportunity_id = %s
+                    """, (opportunity_id,))
+            else:
+                waiting_student = None
+            
+            # ✅ Commit transaction
+            conn.commit()
+            
+            # STEP 5: Fetch seat summary (after commit)
+            cursor.execute("""
+                SELECT seats, allocated_count, remaining_seats
+                FROM seat_summary
+                WHERE opportunity_id = %s
+            """, (opportunity_id,))
+            
+            seat_info = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            print(f"✅ Allocation {allocation_id} REJECTED - {allocation['student_name']} from {allocation['company_name']}")
+            if seat_info:
+                print(f"📊 Seat Summary Updated: {seat_info['allocated_count']}/{seat_info['seats']} seats filled, {seat_info['remaining_seats']} remaining")
+            
+            return {
+                "status": "success",
+                "message": f"You have rejected the allocation with {allocation['company_name']}",
+                "allocation_id": allocation_id,
+                "student_name": allocation['student_name'],
+                "company_name": allocation['company_name'],
+                "role": allocation['role'],
+                "seat_summary": {
+                    "total_seats": seat_info['seats'] if seat_info else None,
+                    "allocated": seat_info['allocated_count'] if seat_info else None,
+                    "remaining": seat_info['remaining_seats'] if seat_info else None
+                },
+                "promoted_student": waiting_student['student_name'] if waiting_student else None
+            }
+            
+        except Exception as inner_e:
+            conn.rollback()
+            raise inner_e
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error rejecting allocation: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/student/allocation/{allocation_id}/status")
+def check_allocation_status(allocation_id: str):
+    """Check current status of an allocation"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT 
+                allocation_id,
+                profile_id,
+                student_name,
+                student_email,
+                company_name,
+                role,
+                sector,
+                location,
+                status,
+                allocation_score,
+                allocated_at,
+                updated_at
+            FROM allocation_status 
+            WHERE allocation_id = %s
+        """, (allocation_id,))
+        
+        allocation = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not allocation:
+            raise HTTPException(status_code=404, detail=f"Allocation {allocation_id} not found")
+        
+        print(f"✅ Fetched allocation {allocation_id}: Status={allocation['status']}")
+        
+        return allocation
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error checking allocation status: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 # =======================
 # RESPOND TO ALLOCATION
 # =======================
@@ -1964,15 +2711,7 @@ def verify_otp(req: VerifyOtpRequest):
 async def trigger_allocation():
     """
     Triggers the allocation algorithm to assign students to opportunities.
-    This should be run after students have submitted preferences and scores are calculated.
-    
-    The allocation algorithm will:
-    1. Fetch all students with pending allocation scores
-    2. Rank students by score for each opportunity
-    3. Assign students to opportunities based on available seats
-    4. Create waitlists for oversubscribed opportunities
-    5. Send email notifications to students
-    6. Update allocation_status and seat_summary tables
+    Also sends email notifications to allocated students.
     """
     print("\n" + "=" * 60)
     print("🎯 STARTING ALLOCATION ALGORITHM")
@@ -1989,6 +2728,76 @@ async def trigger_allocation():
         print("✅ ALLOCATION COMPLETED SUCCESSFULLY")
         print("=" * 60)
         
+        # ✅ WAIT A MOMENT FOR DB TO COMMIT
+        import time
+        time.sleep(2)
+        
+        # After creating allocations, send emails
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        # ✅ Fetch allocations that were just created (with allocation_id)
+        cursor.execute("""
+            SELECT 
+                allocation_id,
+                student_email,
+                student_name,
+                company_name,
+                role,
+                status
+            FROM allocation_status
+            WHERE status IN ('Allocated', 'Waiting')
+            AND allocation_id IS NOT NULL
+            AND student_email IS NOT NULL
+            AND student_email != ''
+            AND student_email != 'None'
+            AND allocated_at >= DATE_SUB(NOW(), INTERVAL 2 MINUTE)
+            ORDER BY allocated_at DESC
+        """)
+        
+        allocations = cursor.fetchall()
+        
+        print(f"\n📧 Found {len(allocations)} allocations to send emails for")
+        
+        email_count = 0
+        email_errors = []
+        
+        for alloc in allocations:
+            try:
+                # ✅ Validate allocation_id before sending
+                if not alloc['allocation_id'] or alloc['allocation_id'] == 'None':
+                    print(f"⚠️ Skipping {alloc['student_name']} - No allocation_id")
+                    continue
+                
+                if not alloc['student_email'] or alloc['student_email'] == 'None' or alloc['student_email'] == '':
+                    print(f"⚠️ Skipping {alloc['student_name']} - Invalid email")
+                    continue
+                
+                print(f"📧 Sending email to {alloc['student_name']} ({alloc['student_email']}) - Allocation ID: {alloc['allocation_id']}")
+                
+                # Send email
+                sent = send_allocation_email(
+                    student_email=alloc['student_email'],
+                    student_name=alloc['student_name'],
+                    company_name=alloc['company_name'],
+                    role=alloc['role'],
+                    allocation_id=alloc['allocation_id']  # ✅ Now has valid UUID
+                )
+                
+                if sent:
+                    email_count += 1
+                    print(f"   ✅ Email sent successfully")
+                else:
+                    email_errors.append(f"{alloc['student_name']}: Failed to send")
+                    print(f"   ❌ Email failed to send")
+                    
+            except Exception as e:
+                print(f"   ❌ Error sending to {alloc['student_name']}: {e}")
+                email_errors.append(f"{alloc['student_name']}: {str(e)}")
+        
+        cursor.close()
+        conn.close()
+        
         # Fetch summary statistics
         with engine.connect() as conn:
             stats = conn.execute(text("""
@@ -2001,9 +2810,16 @@ async def trigger_allocation():
             
             stats_dict = {row[0]: row[1] for row in stats}
         
+        print(f"\n✅ Allocation complete! {email_count} emails sent")
+        if email_errors:
+            print(f"⚠️ Errors: {email_errors}")
+        
+        
         return {
-            "message": "Allocation completed successfully",
+            "message": f"Allocation completed successfully and {email_count} emails sent",
             "statistics": stats_dict,
+            "emails_sent": email_count,
+            "allocations_created": len(allocations),
             "details": result if result else "Allocation process completed"
         }
         
@@ -2123,71 +2939,6 @@ async def trigger_opportunity_reallocation(opportunity_id: int):
         raise HTTPException(status_code=500, detail=f"Reallocation failed: {str(e)}")
 
 
-@app.get("/admin/allocation-statistics")
-async def get_allocation_statistics():
-    """
-    Get comprehensive statistics about the current allocation state.
-    Shows breakdowns by status, opportunity, and overall metrics.
-    """
-    try:
-        with engine.connect() as conn:
-            # Overall status breakdown
-            status_stats = conn.execute(text("""
-                SELECT 
-                    status,
-                    COUNT(*) as count
-                FROM allocation_status
-                GROUP BY status
-            """)).fetchall()
-            
-            # Opportunity-wise breakdown
-            opportunity_stats = conn.execute(text("""
-                SELECT 
-                    company_name,
-                    role,
-                    seats,
-                    SUM(CASE WHEN status = 'Allocated' THEN 1 ELSE 0 END) as allocated,
-                    SUM(CASE WHEN status = 'Waiting' THEN 1 ELSE 0 END) as waiting,
-                    SUM(CASE WHEN status = 'Accepted' THEN 1 ELSE 0 END) as accepted
-                FROM allocation_status
-                GROUP BY company_name, role, seats
-                ORDER BY company_name, role
-            """)).fetchall()
-            
-            # Seat utilization
-            seat_utilization = conn.execute(text("""
-                SELECT 
-                    SUM(seats) as total_seats,
-                    SUM(CASE WHEN status = 'Allocated' THEN 1 ELSE 0 END) as filled_seats,
-                    SUM(CASE WHEN status = 'Waiting' THEN 1 ELSE 0 END) as waiting_students
-                FROM allocation_status
-            """)).fetchone()
-        
-        return {
-            "status_breakdown": {row[0]: row[1] for row in status_stats},
-            "opportunities": [
-                {
-                    "company": row[0],
-                    "role": row[1],
-                    "total_seats": row[2],
-                    "allocated": row[3],
-                    "waiting": row[4],
-                    "accepted": row[5],
-                    "utilization_percentage": round((row[3] / row[2] * 100) if row[2] > 0 else 0, 2)
-                }
-                for row in opportunity_stats
-            ],
-            "overall": {
-                "total_seats": seat_utilization[0] if seat_utilization else 0,
-                "filled_seats": seat_utilization[1] if seat_utilization else 0,
-                "waiting_students": seat_utilization[2] if seat_utilization else 0,
-                "utilization_percentage": round((seat_utilization[1] / seat_utilization[0] * 100) if seat_utilization and seat_utilization[0] > 0 else 0, 2)
-            }
-        }
-        
-    except Exception as e:
-        print(f"❌ Error fetching allocation statistics: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch statistics: {str(e)}")
 
 # =======================
 # ADMIN DATA ENDPOINTS
@@ -2295,3 +3046,227 @@ async def get_all_jobs():
         print(f"❌ Error fetching jobs: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch jobs: {str(e)}")
 
+# =======================
+# ADMIN: VIEW ALLOCATED STUDENTS
+# =======================
+
+@app.get("/admin/allocation-statistics")
+def get_allocation_statistics():
+    """Get overall allocation statistics by company"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        # Get all unique companies from allocation_status with their stats
+        cursor.execute("""
+            SELECT 
+                als.company_name as org_name,
+                COUNT(DISTINCT CASE WHEN als.status = 'Accepted' THEN als.profile_id END) as accepted,
+                COUNT(DISTINCT CASE WHEN als.status = 'Allocated' THEN als.profile_id END) as allocated,
+                COUNT(DISTINCT CASE WHEN als.status = 'Waiting' THEN als.profile_id END) as waiting,
+                COUNT(DISTINCT CASE WHEN als.status = 'Rejected' THEN als.profile_id END) as rejected,
+                COUNT(DISTINCT als.opportunity_id) as total_opportunities
+            FROM allocation_status als
+            WHERE als.company_name IS NOT NULL AND als.company_name != ''
+            GROUP BY als.company_name
+            ORDER BY allocated DESC, accepted DESC
+        """)
+        
+        stats = cursor.fetchall()
+        
+        print(f"✅ Found {len(stats)} companies")
+        
+        # For each company, get organization_id and total vacancies
+        for stat in stats:
+            company_name = stat['org_name']
+            
+            # Find organization ID by matching company name
+            cursor.execute(
+                "SELECT organization_id FROM organizations WHERE name = %s OR name LIKE %s LIMIT 1",
+                (company_name, f"%{company_name}%")
+            )
+            org_result = cursor.fetchone()
+            stat['organization_id'] = org_result['organization_id'] if org_result else 0
+            
+            # Get total seats/vacancies from opportunities for this company's jobs
+            cursor.execute("""
+                SELECT COALESCE(SUM(o.seats), 0) as total_vacancies,
+                       COUNT(DISTINCT o.opportunity_id) as opportunity_count
+                FROM opportunities o
+                WHERE o.opportunity_id IN (
+                    SELECT DISTINCT opportunity_id FROM allocation_status 
+                    WHERE company_name = %s
+                )
+            """, (company_name,))
+            
+            vac_result = cursor.fetchone()
+            if vac_result:
+                stat['total_vacancies'] = int(vac_result['total_vacancies'])
+            else:
+                stat['total_vacancies'] = 0
+            
+            print(f"  📊 {company_name}: Accepted={stat['accepted']}, Allocated={stat['allocated']}, Waiting={stat['waiting']}, Total Vacancies={stat['total_vacancies']}")
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "statistics": stats,
+            "total_companies": len(stats)
+        }
+        
+    except Exception as e:
+        print(f"❌ Error fetching statistics: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/seat-summary/{opportunity_id}")
+def get_seat_summary(opportunity_id: int):
+    """Get seat summary for a specific opportunity"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT 
+                opportunity_id,
+                role,
+                organization_name,
+                seats,
+                allocated_count,
+                remaining_seats,
+                min_match_score,
+                updated_at
+            FROM seat_summary
+            WHERE opportunity_id = %s
+        """, (opportunity_id,))
+        
+        seat_info = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not seat_info:
+            raise HTTPException(status_code=404, detail=f"Seat summary for opportunity {opportunity_id} not found")
+        
+        print(f"📊 Seat Summary for {seat_info['role']} at {seat_info['organization_name']}")
+        print(f"   Total: {seat_info['seats']}, Allocated: {seat_info['allocated_count']}, Remaining: {seat_info['remaining_seats']}")
+        
+        return seat_info
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching seat summary: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/company/{org_id}/allocated-students")
+def get_company_allocated_students(org_id: int):
+    """Get all students allocated to a company - WITHOUT DUPLICATES"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        # Get company name from organization ID
+        cursor.execute(
+            "SELECT organization_id, name FROM organizations WHERE organization_id = %s",
+            (org_id,)
+        )
+        company = cursor.fetchone()
+        
+        if not company:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail=f"Company with ID {org_id} not found")
+        
+        company_name = company['name']
+        
+        print(f"📊 Fetching students for company: {company_name} (ID: {org_id})")
+        
+        # ✅ FIX: Get DISTINCT students (no duplicates)
+        cursor.execute("""
+            SELECT DISTINCT
+                als.profile_id,
+                als.student_name,
+                als.student_email,
+                als.role,
+                als.sector,
+                als.location,
+                als.allocation_score,
+                als.status,
+                als.allocated_at,
+                als.allocation_id,
+                opp.seats,
+                opp.min_score,
+                opp.stipend
+            FROM allocation_status als
+            LEFT JOIN opportunities opp ON als.opportunity_id = opp.opportunity_id
+            WHERE als.company_name = %s 
+              AND als.status IN ('Allocated', 'Accepted', 'Waiting')
+            ORDER BY 
+                CASE 
+                    WHEN als.status = 'Accepted' THEN 1
+                    WHEN als.status = 'Allocated' THEN 2
+                    WHEN als.status = 'Waiting' THEN 3
+                END,
+                als.allocation_score DESC
+        """, (company_name,))
+        
+        all_students = cursor.fetchall()
+        
+        print(f"✅ Found {len(all_students)} unique allocated students for {company_name}")
+        
+        # Group by status
+        status_groups = {
+            'Accepted': [],
+            'Allocated': [],
+            'Waiting': []
+        }
+        
+        seen_students = {
+            'Accepted': set(),
+            'Allocated': set(),
+            'Waiting': set()
+        }
+        
+        for student in all_students:
+            status = student['status']
+            profile_id = student['profile_id']
+            
+            # ✅ Only add if we haven't seen this student in this status
+            if status in status_groups and profile_id not in seen_students[status]:
+                status_groups[status].append(student)
+                seen_students[status].add(profile_id)
+        
+        # Calculate totals
+        total_accepted = len(status_groups['Accepted'])
+        total_allocated = len(status_groups['Allocated'])
+        total_waiting = len(status_groups['Waiting'])
+        total_all = total_accepted + total_allocated + total_waiting
+        
+        print(f"   📈 Summary: Accepted={total_accepted}, Allocated={total_allocated}, Waiting={total_waiting}, Total={total_all}")
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "company_name": company_name,
+            "org_id": org_id,
+            "status_groups": status_groups,
+            "total_accepted": total_accepted,
+            "total_allocated": total_allocated,
+            "total_waiting": total_waiting,
+            "total_students": total_all  # ✅ Single source of truth
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching allocated students: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))

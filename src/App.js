@@ -15,6 +15,7 @@ import SignupPage from './components/SignupPage';
 import CompanyDashboard from './components/company/CompanyDashboardNew';
 import AdminDashboard from './components/AdminDashboard';
 import StudentArea from './pages/StudentArea'; // 👈 1. IMPORT THE NEW CONTROLLER COMPONENT
+import AllocationResponse from './components/AllocationResponse';
 
 function App() {
   return (
@@ -60,6 +61,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/allocation/:action/:allocation_id" element={<AllocationResponse />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

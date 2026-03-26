@@ -6,6 +6,8 @@ from email.mime.multipart import MIMEMultipart
 import smtplib
 from sentence_transformers import SentenceTransformer
 import json
+import uuid
+from datetime import datetime
 
 # --- CONFIGURATION ---
 DB_CONNECTION_STRING = "mysql+pymysql://root:MyNewPassword123!@localhost/samarthya_db"
@@ -240,6 +242,7 @@ def run_allocation():
                 "role": row["opportunity_role"],
                 "company_name": row["organization_name"],
                 "sector_name": row["opportunity_sector"],
+                "location": row["opportunity_location"],  # ✅ ADD LOCATION
                 "seats": row["seats"],
                 "min_score": min_score,
                 "student_qualification": row["student_qualification"],
@@ -362,8 +365,19 @@ def run_allocation():
         
         final_allocation_df = final_allocation_df[[
             "profile_id", "student_name", "email", "opportunity_id", 
-            "role", "company_name", "sector_name", "score", "status", "seats", "min_score"
+            "role", "company_name", "sector_name", "location", "score", "status", "seats", "min_score"
         ]]
+        
+        # ✅ Rename columns to match database schema
+        final_allocation_df = final_allocation_df.rename(columns={
+            "email": "student_email",
+            "sector_name": "sector",
+            "score": "allocation_score"
+        })
+        
+        # ✅ Generate unique allocation_id and timestamp for each row
+        final_allocation_df['allocation_id'] = final_allocation_df.apply(lambda row: str(uuid.uuid4()), axis=1)
+        final_allocation_df['allocated_at'] = datetime.now()
         
         # IMPORTANT: Read existing allocation_status records that are NOT being processed in this run
         # This preserves records created by the score calculation API (calculate_student_scores)
@@ -387,11 +401,21 @@ def run_allocation():
             print(f"   - Added/Updated {len(final_allocation_df)} new records")
             print(f"   - Total records: {len(combined_df)}")
             
+            # ✅ Print allocation_ids for verification
+            print(f"\n📋 Generated allocation IDs:")
+            for idx, row in final_allocation_df.iterrows():
+                print(f"   - {row['student_name']}: {row['allocation_id']}")
+            
         except Exception as e:
             # If table doesn't exist or error reading, just create new
             print(f"   Note: Could not preserve existing records ({e})")
             final_allocation_df.to_sql("allocation_status", engine, if_exists="replace", index=False)
             print("\n✅ Allocation Status table created in DB.")
+            
+            # ✅ Print allocation_ids for verification
+            print(f"\n📋 Generated allocation IDs:")
+            for idx, row in final_allocation_df.iterrows():
+                print(f"   - {row['student_name']}: {row['allocation_id']}")
 
         # 2. Create Seat Summary Table
         pd.DataFrame(seat_summary_rows).to_sql("seat_summary", engine, if_exists="replace", index=False)
