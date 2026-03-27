@@ -2607,7 +2607,7 @@ from twilio.rest import Client
 
 # ------------------ Twilio Credentials ------------------
 TWILIO_ACCOUNT_SID = "AC45fac939cab0d8fa06832535086802ae"
-TWILIO_AUTH_TOKEN = "167efc18b04f66161adce5db9e9a2b0c"
+TWILIO_AUTH_TOKEN = "64edb0aa789951db666ab9fa4cd3db82"
 TWILIO_PHONE_NUMBER = "+15179968340"
 
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
