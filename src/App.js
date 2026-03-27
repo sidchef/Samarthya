@@ -15,6 +15,7 @@ import SignupPage from './components/SignupPage';
 import CompanyDashboard from './components/company/CompanyDashboardNew';
 import AdminDashboard from './components/AdminDashboard';
 import StudentArea from './pages/StudentArea'; // 👈 1. IMPORT THE NEW CONTROLLER COMPONENT
+import StudentOnboarding from './components/onboarding/StudentOnboarding'; // ✅ Import for onboarding route
 import AllocationResponse from './components/AllocationResponse';
 
 function App() {
@@ -28,6 +29,9 @@ function App() {
           <Route path="/" element={<AuthPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
+
+          {/* ✅ Onboarding Route - for new users after email verification */}
+          <Route path="/onboarding/:userId" element={<StudentOnboarding />} />
 
           {/* --- Protected Routes --- */}
           {/* To access these routes, the user must meet the role requirements */}

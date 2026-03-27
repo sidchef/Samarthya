@@ -3,6 +3,7 @@ import React from 'react';
 const PersonalDetails = ({ data, handleChange, handleFileChange, nextStep, prevStep }) => {
   // This constant now correctly checks for all the fields present in the form below.
   // It will only be 'true' when every single field has been filled out.
+
   const isFormComplete = 
     data.fullName && 
     data.studentMobile && 
@@ -30,9 +31,21 @@ const PersonalDetails = ({ data, handleChange, handleFileChange, nextStep, prevS
             <label htmlFor="dob" className="block text-sm font-medium text-gray-700">Date of Birth</label>
             <input type="date" name="dob" id="dob" value={data.dob || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" />
           </div>
+          {/* 🔥 UPDATED MOBILE FIELD */}
           <div>
-            <label htmlFor="studentMobile" className="block text-sm font-medium text-gray-700">Your Mobile Number</label>
-            <input type="tel" name="studentMobile" value={data.studentMobile || ''} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" />
+            <label className="block text-sm font-medium text-gray-700">
+              Your Mobile Number
+            </label>
+            <input 
+              type="tel" 
+              name="studentMobile" 
+              value={data.studentMobile || ''} 
+              readOnly   // 🔒 LOCKED
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 cursor-not-allowed"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              This number is linked to your account and cannot be changed
+            </p>
           </div>
         </div>
 

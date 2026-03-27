@@ -244,21 +244,265 @@ def ping_db():
 # =======================
 @app.post("/student/signup")
 def student_signup(email: str = Form(...), mobile: str = Form(...), password: str = Form(...)):
-    with engine.connect() as conn:
-        existing_user = conn.execute(
-            text("SELECT user_id FROM users WHERE email=:email OR mobile=:mobile"),
-            {"email": email, "mobile": mobile}
-        ).fetchone()
-        if existing_user:
-            raise HTTPException(status_code=400, detail="User already exists")
+    """
+    Step 1 of signup: User submits email, mobile, and password
+    They will receive OTP on email to verify
+    """
+    try:
+        print(f"\n📧 Step 1: Student Signup - Email: {email}")
+        
+        # ✅ Check if email already exists
+        with engine.connect() as conn:
+            existing_user = conn.execute(
+                text("SELECT user_id FROM users WHERE email=:email"),
+                {"email": email}
+            ).fetchone()
+            
+            if existing_user:
+                raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # ✅ Generate OTP for email
+        otp = str(random.randint(100000, 999999))
+        
+        # ✅ Store OTP with expiration
+        email_otp_store[email] = {
+            "otp": otp,
+            "generated_at": datetime.now(),
+            "expires_at": datetime.now() + timedelta(minutes=10),
+            "mobile": mobile,
+            "password": password,
+            "attempts": 0
+        }
+        
+        print(f"🔐 Generated OTP: {otp}")
+        
+        # ✅ Send OTP via email
+        try:
+            send_email_otp(email, otp)
+            print(f"✅ OTP sent to {email}")
+        except Exception as mail_error:
+            print(f"⚠️ Email sending failed: {mail_error}")
+            # Fallback: Print OTP to console for testing
+            print(f"\n{'='*50}")
+            print(f"📧 TESTING MODE - OTP for {email}: {otp}")
+            print(f"{'='*50}\n")
+        
+        return {
+            "success": True,
+            "message": f"OTP sent to {email}. Check your email.",
+            "step": "email_verification",
+            "email": email
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in signup: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-        password_hash = pwd_context.hash(password)
-        conn.execute(
-            text("INSERT INTO users (email, password_hash, mobile) VALUES (:email, :p_hash, :mobile)"),
-            {"email": email, "p_hash": password_hash, "mobile": mobile}
-        )
-        conn.commit()
-    return {"message": "Student registered successfully"}
+@app.post("/verify-email-otp")
+def verify_email_otp(email: str = Form(...), otp: str = Form(...)):
+    """
+    Step 2 of signup: User verifies email OTP
+    After this, proceed to complete signup
+    """
+    try:
+        print(f"\n🔐 Step 2: Email OTP Verification - Email: {email}")
+        
+        # ✅ Check if OTP exists
+        if email not in email_otp_store:
+            raise HTTPException(status_code=400, detail="No OTP found. Please signup again.")
+        
+        otp_data = email_otp_store[email]
+        
+        # ✅ Check if OTP expired
+        if datetime.now() > otp_data["expires_at"]:
+            del email_otp_store[email]
+            raise HTTPException(status_code=400, detail="OTP expired. Please signup again.")
+        
+        # ✅ Check attempts (max 3 attempts)
+        if otp_data["attempts"] >= 3:
+            del email_otp_store[email]
+            raise HTTPException(status_code=400, detail="Too many attempts. Please signup again.")
+        
+        # ✅ Check if OTP matches
+        if otp_data["otp"] != otp:
+            otp_data["attempts"] += 1
+            remaining = 3 - otp_data["attempts"]
+            print(f"❌ Invalid OTP. Attempts remaining: {remaining}")
+            raise HTTPException(status_code=400, detail=f"Invalid OTP. {remaining} attempts remaining.")
+        
+        # ✅ OTP verified! Now create the user account
+        print(f"✅ Email OTP verified for {email}")
+        
+        mobile = otp_data["mobile"]
+        password = otp_data["password"]
+        
+        # Create user account
+        with engine.connect() as conn:
+            password_hash = pwd_context.hash(password)
+            conn.execute(
+                text("INSERT INTO users (email, password_hash, mobile) VALUES (:email, :p_hash, :mobile)"),
+                {"email": email, "p_hash": password_hash, "mobile": mobile}
+            )
+            conn.commit()
+            
+            # Get the created user_id
+            user_row = conn.execute(
+                text("SELECT user_id FROM users WHERE email=:email"),
+                {"email": email}
+            ).fetchone()
+            
+            user_id = user_row[0] if user_row else None
+        
+        # Clean up OTP
+        del email_otp_store[email]
+        
+        print(f"✅ Student account created with user_id: {user_id}")
+        
+        return {
+            "success": True,
+            "message": "Email verified! Student account created successfully.",
+            "step": "signup_complete",
+            "user_id": user_id,
+            "email": email,
+            "redirect_url": f"/onboarding/{user_id}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error verifying email OTP: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/resend-email-otp")
+def resend_email_otp(email: str = Form(...)):
+    """
+    Resend OTP if student didn't receive it
+    """
+    try:
+        print(f"\n📧 Resending OTP to {email}")
+        
+        if email not in email_otp_store:
+            raise HTTPException(status_code=400, detail="No signup in progress for this email")
+        
+        # Generate new OTP
+        otp = str(random.randint(100000, 999999))
+        
+        # Update store
+        email_otp_store[email]["otp"] = otp
+        email_otp_store[email]["generated_at"] = datetime.now()
+        email_otp_store[email]["expires_at"] = datetime.now() + timedelta(minutes=10)
+        email_otp_store[email]["attempts"] = 0
+        
+        print(f"🔐 Generated new OTP: {otp}")
+        
+        # Send OTP
+        try:
+            send_email_otp(email, otp)
+            print(f"✅ OTP resent to {email}")
+        except Exception as mail_error:
+            print(f"⚠️ Email sending failed: {mail_error}")
+            print(f"\n{'='*50}")
+            print(f"📧 TESTING MODE - OTP for {email}: {otp}")
+            print(f"{'='*50}\n")
+        
+        return {
+            "success": True,
+            "message": f"OTP resent to {email}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error resending OTP: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def send_email_otp(email: str, otp: str):
+    """Send OTP via email using SMTP"""
+    try:
+        subject = "🔐 Email Verification OTP - Samarthya"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; background-color: #f4f4f9; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center; }}
+                .content {{ padding: 30px; text-align: center; }}
+                .otp-box {{ background: #f0f4ff; border: 2px solid #667eea; padding: 20px; border-radius: 8px; margin: 20px 0; }}
+                .otp-code {{ font-size: 36px; font-weight: bold; color: #667eea; letter-spacing: 5px; }}
+                .note {{ color: #666; font-size: 14px; margin-top: 15px; }}
+                .footer {{ background: #f5f5f5; padding: 15px; text-align: center; font-size: 12px; color: #666; border-radius: 0 0 8px 8px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🔐 Email Verification</h1>
+                </div>
+                
+                <div class="content">
+                    <p>Hi,</p>
+                    <p>Thank you for signing up with <strong>Samarthya</strong>! 🎓</p>
+                    
+                    <p>Please use the OTP below to verify your email address:</p>
+                    
+                    <div class="otp-box">
+                        <p style="margin: 0; color: #666; font-size: 14px;">Your verification code:</p>
+                        <div class="otp-code">{otp}</div>
+                    </div>
+                    
+                    <div class="note">
+                        <p><strong>⏱️ This OTP is valid for 10 minutes</strong></p>
+                        <p>If you did not request this, please ignore this email.</p>
+                    </div>
+                    
+                    <p style="color: #666; margin-top: 30px;">
+                        Best regards,<br/>
+                        <strong>🎓 Samarthya Team</strong>
+                    </p>
+                </div>
+                
+                <div class="footer">
+                    <p><strong>This is an automated email.</strong> Please do not reply directly.</p>
+                    <p>&copy; 2026 Samarthya. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Create email message
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_EMAIL
+        msg["To"] = email
+        
+        # Attach HTML content
+        msg.attach(MIMEText(html_content, "html"))
+        
+        print(f"📧 Sending email to {email}...")
+        
+        # Send email
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.sendmail(SMTP_EMAIL, email, msg.as_string())
+        
+        print(f"✅ Email OTP sent successfully to {email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error sending email: {e}")
+        raise
+
 
 @app.post("/student/login")
 def student_login(email: str = Form(...), password: str = Form(...)):
@@ -1272,15 +1516,55 @@ async def create_student_profile(
 @app.get("/student/{user_id}/onboarding-status")
 def get_onboarding_status(user_id: int):
     """Checks if a student has completed their profile onboarding."""
-    with engine.connect() as conn:
-        profile = conn.execute(
-            text("SELECT profile_id FROM student_profiles WHERE user_id = :uid"),
-            {"uid": user_id}
-        ).fetchone()
-        
-        # If a profile exists, onboarding is considered complete.
-        is_complete = profile is not None
-        return {"onboarding_complete": is_complete}
+    try:
+        with engine.connect() as conn:
+            profile = conn.execute(
+                text("SELECT profile_id FROM student_profiles WHERE user_id = :uid"),
+                {"uid": user_id}
+            ).fetchone()
+            
+            # If a profile exists, onboarding is considered complete.
+            is_complete = profile is not None
+            
+            print(f"📋 Onboarding Status Check - User ID: {user_id}, Profile Exists: {is_complete}")
+            
+            return {
+                "onboarding_complete": is_complete,
+                "user_id": user_id,
+                "message": "Profile already exists - skip to resume upload" if is_complete else "New user - start from beginning"
+            }
+    except Exception as e:
+        print(f"❌ Error checking onboarding status: {e}")
+        return {
+            "onboarding_complete": False,
+            "user_id": user_id,
+            "message": "Error checking status - defaulting to beginning"
+        }
+
+
+@app.get("/student/{user_id}/details")
+def get_student_details(user_id: int):
+    """Fetch basic student details including mobile number."""
+    try:
+        with engine.connect() as conn:
+            user = conn.execute(
+                text("SELECT user_id, email, mobile FROM users WHERE user_id = :uid"),
+                {"uid": user_id}
+            ).fetchone()
+            
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            print(f"📱 Fetched student details for user_id: {user_id}, mobile: {user[2]}")
+            
+            return {
+                "user_id": user[0],
+                "email": user[1],
+                "mobile": user[2]
+            }
+    except Exception as e:
+        print(f"❌ Error fetching student details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/student/{user_id}/dashboard")
@@ -2609,7 +2893,7 @@ from twilio.rest import Client
 
 # ------------------ Twilio Credentials ------------------
 TWILIO_ACCOUNT_SID = "AC45fac939cab0d8fa06832535086802ae"
-TWILIO_AUTH_TOKEN = "167efc18b04f66161adce5db9e9a2b0c"
+TWILIO_AUTH_TOKEN = "64edb0aa789951db666ab9fa4cd3db82"
 TWILIO_PHONE_NUMBER = "+15179968340"
 
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -2638,8 +2922,9 @@ mock_db = {
     }
 }
 
-# ------------------ OTP Store ------------------
-otp_store = {}
+# ------------------ OTP Stores ------------------
+otp_store = {}  # For Aadhaar/mobile OTP
+email_otp_store = {}  # For email signup verification
 
 # ------------------ Models ------------------
 class SendOtpRequest(BaseModel):
@@ -2647,6 +2932,10 @@ class SendOtpRequest(BaseModel):
 
 class VerifyOtpRequest(BaseModel):
     aadhaar: str
+    otp: str
+
+class VerifyEmailOtpRequest(BaseModel):
+    email: str
     otp: str
 
 # ------------------ Helper Functions ------------------

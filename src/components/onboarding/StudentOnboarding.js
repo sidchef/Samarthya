@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../../context/AuthContext'; 
+import { useAuth } from '../../context/AuthContext';
+import { useParams } from 'react-router-dom';
 
 import ProgressBar from './ProgressBar';
 import AadhaarVerification from './steps/AadhaarVerification';
@@ -11,14 +12,86 @@ import Confirmation from './steps/Confirmation';
 const TOTAL_STEPS = 5;
 
 const StudentOnboarding = ({ onOnboardingComplete }) => {
+  const { userId } = useParams();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({});
+  const [loading, setLoading] = useState(true);
   const { user } = useAuth();
+
+  // ✅ Check onboarding status on mount
+  useEffect(() => {
+    const checkOnboardingStatus = async () => {
+      try {
+        setLoading(true);
+        
+        // Use userId from params, fallback to user.id from context
+        const uid = userId || user?.id;
+        if (!uid) {
+          console.error("❌ No user ID found");
+          return;
+        }
+
+        console.log(`🔍 Checking onboarding status for user_id: ${uid}`);
+        
+        const response = await fetch(`http://127.0.0.1:8000/student/${uid}/onboarding-status`);
+        const data = await response.json();
+        
+        console.log("✅ Onboarding status:", data);
+        
+        // ✅ If profile already exists, skip to step 3 (Resume Upload)
+        if (data.onboarding_complete) {
+          console.log("📝 Profile exists, starting from Resume Upload (Step 3)");
+          setCurrentStep(3);
+        } else {
+          console.log("📝 No profile found, starting from Aadhaar Verification (Step 1)");
+          setCurrentStep(1);
+        }
+      } catch (error) {
+        console.error("❌ Error checking onboarding status:", error);
+        setCurrentStep(1); // Default to step 1
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkOnboardingStatus();
+  }, [userId, user?.id]);
 
   useEffect(() => {
     // This log helps you see the complete data object as it's being built
     console.log("Form data has been updated:", formData);
   }, [formData]);
+
+  // ✅ Helper function to get user ID (prioritize userId from params)
+  const getCurrentUserId = () => userId || user?.id;
+
+  // ✅ Fetch user's mobile number from backend and auto-fill
+  useEffect(() => {
+    const fetchUserMobile = async () => {
+      try {
+        const currentUserId = getCurrentUserId();
+        if (!currentUserId) return;
+
+        console.log(`📱 Fetching mobile for user_id: ${currentUserId}`);
+        
+        const response = await fetch(`http://127.0.0.1:8000/student/${currentUserId}/details`);
+        const data = await response.json();
+        
+        if (response.ok && data.mobile) {
+          console.log(`✅ Mobile fetched: ${data.mobile}`);
+          // Auto-fill the mobile number
+          setFormData(prev => ({
+            ...prev,
+            studentMobile: data.mobile
+          }));
+        }
+      } catch (error) {
+        console.error("❌ Error fetching mobile number:", error);
+      }
+    };
+
+    fetchUserMobile();
+  }, [userId, user?.id]);
 
   const nextStep = () => setCurrentStep(prev => (prev < TOTAL_STEPS ? prev + 1 : prev));
   const prevStep = () => setCurrentStep(prev => (prev > 1 ? prev - 1 : prev));
@@ -38,7 +111,8 @@ const StudentOnboarding = ({ onOnboardingComplete }) => {
   };
 
   const handlePersonalDetailsSubmit = async () => {
-    if (!user || !user.id) {
+    const currentUserId = getCurrentUserId();
+    if (!currentUserId) {
         alert("Authentication error: User not found. Please log in again.");
         return;
     }
@@ -56,7 +130,7 @@ const StudentOnboarding = ({ onOnboardingComplete }) => {
     detailsFormData.append('incomeCertificate', formData.incomeCertificate);
 
     try {
-        const response = await fetch(`http://127.0.0.1:8000/student/${user.id}/personal-details`, {
+        const response = await fetch(`http://127.0.0.1:8000/student/${currentUserId}/personal-details`, {
             method: 'POST',
             body: detailsFormData,
         });
@@ -77,7 +151,8 @@ const StudentOnboarding = ({ onOnboardingComplete }) => {
 
 // --- FINAL SUBMISSION LOGIC ---
 const handleSubmit = async () => {
-  if (!user || !user.id) {
+  const currentUserId = getCurrentUserId();
+  if (!currentUserId) {
       alert("Authentication error: User not found.");
       return;
   }
@@ -134,7 +209,7 @@ const handleSubmit = async () => {
 
   try {
       // ===== STEP 1: Save the profile and files =====
-      const profileResponse = await fetch(`http://127.0.0.1:8000/student/profile/${user.id}`, {
+      const profileResponse = await fetch(`http://127.0.0.1:8000/student/profile/${currentUserId}`, {
           method: 'POST',
           body: profileData,
       });
@@ -155,7 +230,7 @@ const handleSubmit = async () => {
       if (filledPreferences.length > 0) {
           console.log("Submitting preferences:", filledPreferences);
           
-          const preferencesResponse = await fetch(`http://127.0.0.1:8000/student/${user.id}/preferences`, {
+          const preferencesResponse = await fetch(`http://127.0.0.1:8000/student/${currentUserId}/preferences`, {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/json'
@@ -174,7 +249,7 @@ const handleSubmit = async () => {
           // ===== STEP 3: Calculate allocation scores =====
           console.log("Calculating allocation scores...");
           try {
-              const scoresResponse = await fetch(`http://127.0.0.1:8000/student/${user.id}/calculate-scores`, {
+              const scoresResponse = await fetch(`http://127.0.0.1:8000/student/${currentUserId}/calculate-scores`, {
                   method: 'POST',
                   headers: {
                       'Content-Type': 'application/json'
@@ -232,8 +307,18 @@ const handleSubmit = async () => {
   return (
     <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
       <div className="w-full max-w-2xl bg-white p-8 rounded-lg shadow-lg">
-        <ProgressBar currentStep={currentStep} totalSteps={TOTAL_STEPS} />
-        {renderStep()}
+        {/* ✅ Loading State */}
+        {loading ? (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading onboarding information...</p>
+          </div>
+        ) : (
+          <>
+            <ProgressBar currentStep={currentStep} totalSteps={TOTAL_STEPS} />
+            {renderStep()}
+          </>
+        )}
       </div>
     </div>
   );
