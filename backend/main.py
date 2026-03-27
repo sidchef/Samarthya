@@ -1542,6 +1542,31 @@ def get_onboarding_status(user_id: int):
         }
 
 
+@app.get("/student/{user_id}/details")
+def get_student_details(user_id: int):
+    """Fetch basic student details including mobile number."""
+    try:
+        with engine.connect() as conn:
+            user = conn.execute(
+                text("SELECT user_id, email, mobile FROM users WHERE user_id = :uid"),
+                {"uid": user_id}
+            ).fetchone()
+            
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            print(f"📱 Fetched student details for user_id: {user_id}, mobile: {user[2]}")
+            
+            return {
+                "user_id": user[0],
+                "email": user[1],
+                "mobile": user[2]
+            }
+    except Exception as e:
+        print(f"❌ Error fetching student details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/student/{user_id}/dashboard")
 def get_student_dashboard_data(user_id: int):
     """Fetches all necessary data for the student's application dashboard."""

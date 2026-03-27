@@ -65,6 +65,34 @@ const StudentOnboarding = ({ onOnboardingComplete }) => {
   // ✅ Helper function to get user ID (prioritize userId from params)
   const getCurrentUserId = () => userId || user?.id;
 
+  // ✅ Fetch user's mobile number from backend and auto-fill
+  useEffect(() => {
+    const fetchUserMobile = async () => {
+      try {
+        const currentUserId = getCurrentUserId();
+        if (!currentUserId) return;
+
+        console.log(`📱 Fetching mobile for user_id: ${currentUserId}`);
+        
+        const response = await fetch(`http://127.0.0.1:8000/student/${currentUserId}/details`);
+        const data = await response.json();
+        
+        if (response.ok && data.mobile) {
+          console.log(`✅ Mobile fetched: ${data.mobile}`);
+          // Auto-fill the mobile number
+          setFormData(prev => ({
+            ...prev,
+            studentMobile: data.mobile
+          }));
+        }
+      } catch (error) {
+        console.error("❌ Error fetching mobile number:", error);
+      }
+    };
+
+    fetchUserMobile();
+  }, [userId, user?.id]);
+
   const nextStep = () => setCurrentStep(prev => (prev < TOTAL_STEPS ? prev + 1 : prev));
   const prevStep = () => setCurrentStep(prev => (prev > 1 ? prev - 1 : prev));
 

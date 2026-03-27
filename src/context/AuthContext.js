@@ -52,9 +52,12 @@ export const AuthProvider = ({ children }) => {
 
       const id = data[idField];
       const name = data.name || '';
+      const mobile = data.mobile || "";
       
       const userData = { token: 'real-token', role: role, id: id, email: email, name: name };
       localStorage.setItem('user', JSON.stringify(userData));
+      localStorage.setItem('mobile', mobile);   // ✅ IMPORTANT
+
       setUser(userData);
 
       // Redirect based on role
